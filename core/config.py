@@ -10,8 +10,8 @@ CONFIG_PATH = Path(__file__).parent.parent / "config.json"
 
 _DEFAULTS = {
     "language": "es",
-    "github_owner": "TU_USUARIO",
-    "github_repo": "Davenlab-Security-Remediation-Tool",
+    "github_owner": "Alan-Dave",
+    "github_repo": "Davenlab-Security-Remedation-Tool",
     "check_updates_on_start": True,
 }
 

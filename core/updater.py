@@ -24,9 +24,11 @@ from PyQt6.QtCore import QThread, pyqtSignal
 log = logging.getLogger(__name__)
 
 # ─── Constantes (ajustar antes de publicar) ───────────────────────────────────
-APP_VERSION   = "1.0.0"
-GITHUB_OWNER  = "TU_USUARIO"          # ← Cambiar por tu usuario de GitHub
-GITHUB_REPO   = "Davenlab-Security-Remediation-Tool"
+APP_VERSION   = "1.1.0"
+GITHUB_OWNER  = "Alan-Dave"          # ← Cambiar por tu usuario de GitHub
+GITHUB_REPO   = "Davenlab-Security-Remedation-Tool"
+# Sanitizar por si se ingresa la URL completa
+GITHUB_REPO   = GITHUB_REPO.rstrip("/").split("/")[-1].removesuffix(".git") if "/" in GITHUB_REPO else GITHUB_REPO
 API_URL       = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/releases/latest"
 TIMEOUT_SECS  = 8
 
