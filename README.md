@@ -1,6 +1,6 @@
 <div align="center">
 
-<h1>🛡️ Davenlab Security Remediation Tool</h1>
+<h1>🛡️ Security Remediation Tool</h1>
 
 <p>
   <strong>Asistente avanzado de análisis forense y mitigación guiada para Windows</strong><br>
