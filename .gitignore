@@ -17,12 +17,21 @@ ENV/
 build/
 dist/
 *.egg-info/
-*.spec
+*.spec.bak
 *.exe
 
 # ─── PyInstaller ──────────────────────────────────────────
-# Generados al compilar con PyInstaller
 *.manifest
+__pycache__/
+
+# ─── Inno Setup / instalador ──────────────────────────────
+installer_output/
+Output/
+
+# ─── Assets binarios (no versionar el .ico generado) ──────
+assets/*.ico
+assets/*.jpg
+assets/*.png
 
 # ─── Logs de la aplicación ────────────────────────────────
 # La carpeta logs/ puede contener datos sensibles del sistema del usuario.

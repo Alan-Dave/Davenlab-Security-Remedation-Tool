@@ -1,164 +1,251 @@
+import json
+import os
+import sys
+import tempfile
+import subprocess
+from pathlib import Path
+
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QTableWidget, QTableWidgetItem, QMessageBox,
-    QLabel, QDialog, QTextEdit, QProgressBar, QFrame, QSizePolicy,
-    QStackedWidget, QHeaderView, QGraphicsDropShadowEffect, QApplication
+    QLabel, QDialog, QTextEdit, QProgressBar, QFrame,
+    QStackedWidget, QHeaderView, QComboBox, QApplication,
 )
-from PyQt6.QtGui import QColor, QFont, QLinearGradient, QPainter, QBrush, QPen, QIcon
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer, QPropertyAnimation, QEasingCurve, QRect
-import json
-import os
-import subprocess
-from pathlib import Path
+from PyQt6.QtGui import QColor, QFont
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer, QPropertyAnimation, QEasingCurve
+
 from core.analyzer import ThreatAnalyzer
 from core.mitigator import Mitigator
 from core.low_level_guide import LowLevelGuide
+from core.i18n import t, set_language, get_language
+from core import config as cfg
+from core.updater import (
+    UpdateCheckerWorker, DownloadWorker, apply_update, APP_VERSION
+)
+
 
 # ─────────────────────────────────────────────────────────
-#  HILO DE ANÁLISIS (para no congelar la UI)
+#  HILO DE ANÁLISIS
 # ─────────────────────────────────────────────────────────
 class AnalysisWorker(QThread):
     finished = pyqtSignal(list)
+    progress = pyqtSignal(str, int)
 
     def __init__(self, analyzer):
         super().__init__()
         self.analyzer = analyzer
 
     def run(self):
+        self.analyzer.progress_callback = lambda msg, pct: self.progress.emit(msg, pct)
         threats = self.analyzer.analyze()
         self.finished.emit(threats)
 
+
 # ─────────────────────────────────────────────────────────
-#  DIÁLOGO DE DETALLES FORENSES (RAW DATA)
+#  DIÁLOGO DE DETALLES FORENSES (RAW)
 # ─────────────────────────────────────────────────────────
 class ThreatDetailsDialog(QDialog):
     def __init__(self, threat_name, raw_data, parent=None):
         super().__init__(parent)
-        self.setWindowTitle(f"🔍 Detalles Forenses — {threat_name}")
+        self.setWindowTitle(t('raw_dialog_title', name=threat_name))
         self.resize(600, 430)
         self.setStyleSheet(STYLE_DARK)
 
         layout = QVBoxLayout()
         layout.setSpacing(12)
 
-        title = QLabel(f"<b style='color:#58a6ff'>📋 RAW Data — {threat_name}</b>")
+        title = QLabel(f"<b style='color:#58a6ff'>{t('raw_dialog_header', name=threat_name)}</b>")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title)
 
-        sep = QFrame()
-        sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setStyleSheet("color:#30363d")
-        layout.addWidget(sep)
+        sep = QFrame(); sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setStyleSheet("color:#30363d"); layout.addWidget(sep)
 
         self.text_edit = QTextEdit()
         self.text_edit.setReadOnly(True)
         self.text_edit.setStyleSheet("""
-            QTextEdit {
-                background-color: #010409;
-                color: #e6edf3;
-                border: 1px solid #30363d;
-                border-radius: 6px;
-                padding: 10px;
-            }
+            QTextEdit { background-color:#010409; color:#e6edf3;
+                        border:1px solid #30363d; border-radius:6px; padding:10px; }
         """)
-        formatted = json.dumps(raw_data, indent=4, ensure_ascii=False) if raw_data else "Sin datos RAW disponibles."
+        formatted = json.dumps(raw_data, indent=4, ensure_ascii=False) if raw_data \
+                    else t('raw_no_data')
         self.text_edit.setPlainText(formatted)
         self.text_edit.setFont(QFont("Consolas", 10))
         layout.addWidget(self.text_edit)
 
-        btn_close = QPushButton("Cerrar")
+        btn_close = QPushButton(t('btn_close'))
         btn_close.setFixedHeight(36)
         btn_close.setStyleSheet(BTN_SECONDARY)
         btn_close.clicked.connect(self.accept)
         layout.addWidget(btn_close, alignment=Qt.AlignmentFlag.AlignRight)
-
         self.setLayout(layout)
+
+
+# ─────────────────────────────────────────────────────────
+#  DIÁLOGO DE DESCARGA DE ACTUALIZACIÓN
+# ─────────────────────────────────────────────────────────
+class UpdateDownloadDialog(QDialog):
+    def __init__(self, version: str, url: str, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(t('update_available_title'))
+        self.setFixedSize(420, 130)
+        self.setStyleSheet(STYLE_DARK)
+        self._url     = url
+        self._version = version
+
+        layout = QVBoxLayout()
+        layout.setSpacing(10)
+
+        self.label = QLabel(t('update_downloading', version=version))
+        self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.label.setStyleSheet("color:#8b949e;")
+        layout.addWidget(self.label)
+
+        self.pct = QLabel("0%")
+        self.pct.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.pct.setStyleSheet("color:#484f58; font-size:11px;")
+        layout.addWidget(self.pct)
+
+        self.bar = QProgressBar()
+        self.bar.setRange(0, 100); self.bar.setValue(0)
+        self.bar.setTextVisible(False); self.bar.setFixedHeight(8)
+        self.bar.setStyleSheet("""
+            QProgressBar { background:#21262d; border-radius:4px; }
+            QProgressBar::chunk { background:qlineargradient(x1:0,y1:0,x2:1,y2:0,
+                stop:0 #1f6feb, stop:1 #58a6ff); border-radius:4px; }
+        """)
+        layout.addWidget(self.bar)
+        self.setLayout(layout)
+
+        # Iniciar descarga
+        dest = os.path.join(tempfile.gettempdir(), f"DavenlabSecurityTool_{version}.exe")
+        self._worker = DownloadWorker(url, dest)
+        self._worker.progress.connect(self._on_progress)
+        self._worker.finished.connect(self._on_finished)
+        self._worker.error.connect(self._on_error)
+        self._worker.start()
+
+    def _on_progress(self, pct: int):
+        self.bar.setValue(pct)
+        self.pct.setText(f"{pct}%")
+
+    def _on_finished(self, path: str):
+        QMessageBox.information(self, t('update_restart_title'), t('update_restart_body'))
+        if apply_update(path):
+            QApplication.quit()
+        else:
+            self.accept()
+
+    def _on_error(self, msg: str):
+        QMessageBox.warning(self, t('update_error_title'), msg)
+        self.reject()
+
 
 # ─────────────────────────────────────────────────────────
 #  PANTALLA DE BIENVENIDA
 # ─────────────────────────────────────────────────────────
 class WelcomeScreen(QWidget):
     start_analysis = pyqtSignal()
+    language_changed = pyqtSignal(str)
 
-    def __init__(self, admin_mode):
+    def __init__(self, admin_mode: bool, app_cfg: dict):
         super().__init__()
         self.admin_mode = admin_mode
+        self.app_cfg    = app_cfg
         self._build_ui()
 
     def _build_ui(self):
         layout = QVBoxLayout()
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.setSpacing(16)
+        layout.setSpacing(14)
 
-        # Ícono escudo (emoji grande como sustituto visual)
+        # ── Selector de idioma (top-right) ───────────────────────
+        lang_row = QHBoxLayout()
+        lang_row.addStretch()
+        lang_lbl = QLabel(t('language_label'))
+        lang_lbl.setStyleSheet("color:#484f58; font-size:11px;")
+        lang_row.addWidget(lang_lbl)
+
+        self.lang_combo = QComboBox()
+        self.lang_combo.addItem("🇪🇸  Español", "es")
+        self.lang_combo.addItem("🇬🇧  English", "en")
+        # Seleccionar el idioma actual
+        idx = self.lang_combo.findData(get_language())
+        if idx >= 0:
+            self.lang_combo.setCurrentIndex(idx)
+        self.lang_combo.setStyleSheet("""
+            QComboBox { background:#161b22; color:#8b949e; border:1px solid #30363d;
+                        border-radius:4px; padding:2px 8px; font-size:11px; }
+            QComboBox::drop-down { border:none; }
+            QComboBox QAbstractItemView { background:#161b22; color:#e6edf3;
+                                          selection-background-color:#1f6feb33; }
+        """)
+        self.lang_combo.currentIndexChanged.connect(self._on_lang_change)
+        lang_row.addWidget(self.lang_combo)
+        layout.addLayout(lang_row)
+
+        # ── Escudo ───────────────────────────────────────────────
         icon_label = QLabel("🛡️")
         icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        icon_label.setStyleSheet("font-size: 80px;")
+        icon_label.setStyleSheet("font-size:80px;")
         layout.addWidget(icon_label)
 
-        # Título principal
-        title = QLabel("Davenlab Security\nRemediation Tool")
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title.setStyleSheet("color:#e6edf3; font-size:28px; font-weight:bold; letter-spacing:1px;")
-        layout.addWidget(title)
+        # ── Título ───────────────────────────────────────────────
+        self.title_lbl = QLabel(t('app_title'))
+        self.title_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.title_lbl.setStyleSheet("color:#e6edf3; font-size:26px; font-weight:bold;")
+        layout.addWidget(self.title_lbl)
 
-        # Subtítulo
-        sub = QLabel("Análisis forense y mitigación guiada para Windows")
-        sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        sub.setStyleSheet("color:#8b949e; font-size:13px;")
-        layout.addWidget(sub)
+        self.sub_lbl = QLabel(t('app_subtitle'))
+        self.sub_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.sub_lbl.setStyleSheet("color:#8b949e; font-size:13px;")
+        layout.addWidget(self.sub_lbl)
 
-        # Versión / crédito
-        ver = QLabel("v2.0  ·  Motor heurístico de análisis forense")
-        ver.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        ver.setStyleSheet("color:#484f58; font-size:11px;")
-        layout.addWidget(ver)
+        self.ver_lbl = QLabel(t('app_version_label', version=APP_VERSION))
+        self.ver_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.ver_lbl.setStyleSheet("color:#484f58; font-size:11px;")
+        layout.addWidget(self.ver_lbl)
 
-        layout.addSpacing(12)
+        layout.addSpacing(8)
 
-        # Aviso de permisos
+        # ── Aviso de permisos ────────────────────────────────────
         if not self.admin_mode:
-            warn = QLabel("⚠️  Sin privilegios de Administrador — la mitigación en caliente estará bloqueada.")
-            warn.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            warn.setWordWrap(True)
-            warn.setStyleSheet("""
+            self.perm_lbl = QLabel(t('no_admin_warning'))
+            self.perm_lbl.setStyleSheet("""
                 background-color:#2d1b00; color:#e3b341;
-                border:1px solid #9e6a03; border-radius:6px;
-                padding:8px 16px; font-size:12px;
+                border:1px solid #9e6a03; border-radius:6px; padding:8px 16px; font-size:12px;
             """)
-            layout.addWidget(warn)
         else:
-            ok = QLabel("✅  Ejecutando como Administrador — todas las funciones habilitadas.")
-            ok.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            ok.setStyleSheet("""
+            self.perm_lbl = QLabel(t('admin_ok'))
+            self.perm_lbl.setStyleSheet("""
                 background-color:#0d2a1e; color:#3fb950;
-                border:1px solid #238636; border-radius:6px;
-                padding:8px 16px; font-size:12px;
+                border:1px solid #238636; border-radius:6px; padding:8px 16px; font-size:12px;
             """)
-            layout.addWidget(ok)
+        self.perm_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.perm_lbl.setWordWrap(True)
+        layout.addWidget(self.perm_lbl)
 
-        layout.addSpacing(10)
+        layout.addSpacing(6)
 
-        # ── Botón para abrir la carpeta de logs ──────────────────
+        # ── Botón de logs ────────────────────────────────────────
         logs_row = QHBoxLayout()
         logs_row.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.logs_hint_lbl = QLabel(t('logs_hint'))
+        self.logs_hint_lbl.setStyleSheet("color:#8b949e; font-size:12px;")
+        logs_row.addWidget(self.logs_hint_lbl)
 
-        logs_hint = QLabel("Coloca tus reportes en la carpeta de logs antes de iniciar:")
-        logs_hint.setStyleSheet("color:#8b949e; font-size:12px;")
-        logs_row.addWidget(logs_hint)
-
-        btn_logs = QPushButton("  📂  Abrir carpeta de logs")
-        btn_logs.setFixedHeight(32)
-        btn_logs.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_logs.setStyleSheet(BTN_SECONDARY)
-        btn_logs.clicked.connect(self._open_logs_folder)
-        logs_row.addWidget(btn_logs)
-
+        self.btn_logs = QPushButton(t('open_logs_folder'))
+        self.btn_logs.setFixedHeight(32)
+        self.btn_logs.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_logs.setStyleSheet(BTN_SECONDARY)
+        self.btn_logs.clicked.connect(self._open_logs_folder)
+        logs_row.addWidget(self.btn_logs)
         layout.addLayout(logs_row)
-        layout.addSpacing(20)
 
-        # ── Botón principal INICIAR ANÁLISIS ─────────────────────
-        self.btn_start = QPushButton("  🔍  INICIAR ANÁLISIS")
+        layout.addSpacing(16)
+
+        # ── Botón principal ──────────────────────────────────────
+        self.btn_start = QPushButton(t('btn_start'))
         self.btn_start.setFixedSize(240, 52)
         self.btn_start.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_start.setStyleSheet(BTN_PRIMARY_GLOW)
@@ -167,79 +254,107 @@ class WelcomeScreen(QWidget):
 
         self.setLayout(layout)
 
+    def _on_lang_change(self, idx: int):
+        lang = self.lang_combo.itemData(idx)
+        set_language(lang)
+        cfg.set("language", lang)
+        self.language_changed.emit(lang)
+        self._refresh_texts()
+
+    def _refresh_texts(self):
+        """Actualiza todos los labels de la pantalla al cambiar el idioma."""
+        self.title_lbl.setText(t('app_title'))
+        self.sub_lbl.setText(t('app_subtitle'))
+        self.ver_lbl.setText(t('app_version_label', version=APP_VERSION))
+        self.perm_lbl.setText(t('no_admin_warning') if not self.admin_mode else t('admin_ok'))
+        self.logs_hint_lbl.setText(t('logs_hint'))
+        self.btn_logs.setText(t('open_logs_folder'))
+        self.btn_start.setText(t('btn_start'))
+
     def _open_logs_folder(self):
-        """Crea la carpeta si no existe y la abre en el Explorador de Windows."""
         logs_path = Path(__file__).parent.parent / "logs"
         logs_path.mkdir(parents=True, exist_ok=True)
         os.startfile(str(logs_path))
 
     def _on_start_clicked(self):
-        """Deshabilita el botón y emite la señal con un pequeño delay para sentir la transición."""
         self.btn_start.setEnabled(False)
-        self.btn_start.setText("  ⏳  Iniciando...")
+        self.btn_start.setText(t('btn_starting'))
         self.btn_start.setStyleSheet(BTN_DISABLED)
         QTimer.singleShot(400, self.start_analysis.emit)
 
+
 # ─────────────────────────────────────────────────────────
-#  PANTALLA DE CARGA / ANÁLISIS
+#  PANTALLA DE CARGA
 # ─────────────────────────────────────────────────────────
 class LoadingScreen(QWidget):
     def __init__(self):
         super().__init__()
         layout = QVBoxLayout()
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.setSpacing(20)
+        layout.setSpacing(16)
 
         spin = QLabel("⚙️")
         spin.setAlignment(Qt.AlignmentFlag.AlignCenter)
         spin.setStyleSheet("font-size:64px;")
         layout.addWidget(spin)
 
-        self.status_label = QLabel("Inicializando motor de análisis...")
+        self.status_label = QLabel(t('loading_init'))
         self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.status_label.setStyleSheet("color:#8b949e; font-size:14px;")
         layout.addWidget(self.status_label)
 
+        self.pct_label = QLabel("0%")
+        self.pct_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.pct_label.setStyleSheet("color:#484f58; font-size:11px;")
+        layout.addWidget(self.pct_label)
+
         self.progress = QProgressBar()
-        self.progress.setRange(0, 0)  # Modo indeterminado (animado)
-        self.progress.setFixedWidth(340)
-        self.progress.setFixedHeight(6)
+        self.progress.setRange(0, 100); self.progress.setValue(0)
+        self.progress.setFixedWidth(380); self.progress.setFixedHeight(8)
         self.progress.setTextVisible(False)
         self.progress.setStyleSheet("""
-            QProgressBar { background:#21262d; border-radius:3px; }
-            QProgressBar::chunk { background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #1f6feb, stop:1 #58a6ff); border-radius:3px; }
+            QProgressBar { background:#21262d; border-radius:4px; }
+            QProgressBar::chunk { background:qlineargradient(x1:0,y1:0,x2:1,y2:0,
+                stop:0 #1f6feb, stop:1 #58a6ff); border-radius:4px; }
         """)
         layout.addWidget(self.progress, alignment=Qt.AlignmentFlag.AlignCenter)
 
+        self.collector_label = QLabel("")
+        self.collector_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.collector_label.setStyleSheet("color:#30363d; font-size:10px; font-style:italic;")
+        layout.addWidget(self.collector_label)
         self.setLayout(layout)
 
-        # Animación de mensajes
-        self._messages = [
-            "Leyendo reportes de SecurityToolkit...",
-            "Correlacionando procesos y eventos de Defender...",
-            "Aplicando reglas heurísticas...",
-            "Evaluando árbol de procesos del sistema...",
-            "Preparando resultados...",
-        ]
-        self._msg_idx = 0
-        self._timer = QTimer()
-        self._timer.timeout.connect(self._cycle_message)
-        self._timer.start(900)
+    def update_progress(self, message: str, percent: int):
+        self.status_label.setText(message)
+        self.pct_label.setText(f"{percent}%")
+        self.progress.setValue(percent)
+        col_map = {
+            "proceso": "[ ProcessCollector ]",
+            "defender": "[ DefenderCollector ]",
+            "tarea": "[ TaskCollector ]",
+            "persistencia": "[ PersistenceCollector ]",
+            "clave": "[ PersistenceCollector ]",
+            "log": "[ LogParser ]",
+            "heurística": "[ HeuristicEngine ]",
+            "heuristic": "[ HeuristicEngine ]",
+        }
+        ml = message.lower()
+        self.collector_label.setText(
+            next((v for k, v in col_map.items() if k in ml), "")
+        )
 
-    def _cycle_message(self):
-        self.status_label.setText(self._messages[self._msg_idx % len(self._messages)])
-        self._msg_idx += 1
 
 # ─────────────────────────────────────────────────────────
-#  PANTALLA DE RESULTADOS (DASHBOARD)
+#  PANTALLA DE RESULTADOS
 # ─────────────────────────────────────────────────────────
 class ResultsScreen(QWidget):
     def __init__(self, threats, admin_mode, mitigator, guide):
         super().__init__()
-        self.threats = threats
+        self.threats    = threats
         self.admin_mode = admin_mode
-        self.mitigator = mitigator
-        self.guide = guide
+        self.mitigator  = mitigator
+        self.guide      = guide
         self._build_ui()
 
     def _build_ui(self):
@@ -247,24 +362,19 @@ class ResultsScreen(QWidget):
         layout.setSpacing(10)
         layout.setContentsMargins(16, 12, 16, 12)
 
-        # ─── Encabezado de resultados ───
+        # ── Encabezado ───────────────────────────────────────────
         header_row = QHBoxLayout()
-
-        icon = QLabel("🛡️")
-        icon.setStyleSheet("font-size:22px;")
+        icon = QLabel("🛡️"); icon.setStyleSheet("font-size:22px;")
         header_row.addWidget(icon)
-
-        title = QLabel("Amenazas Detectadas")
+        title = QLabel(t('dashboard_title'))
         title.setStyleSheet("color:#e6edf3; font-size:17px; font-weight:bold;")
         header_row.addWidget(title)
         header_row.addStretch()
 
-        # Badges de conteo
         counts = {"Critical": 0, "High": 0, "Medium": 0, "Low": 0}
-        for t in self.threats:
-            sev = t.get("severity", "Low")
-            if sev in counts:
-                counts[sev] += 1
+        for th in self.threats:
+            sev = th.get("severity", "Low")
+            if sev in counts: counts[sev] += 1
 
         badge_styles = {
             "Critical": ("#ff000033", "#ff6b6b"),
@@ -275,24 +385,23 @@ class ResultsScreen(QWidget):
         for sev, (bg, fg) in badge_styles.items():
             if counts[sev] > 0:
                 b = QLabel(f"  {sev}: {counts[sev]}  ")
-                b.setStyleSheet(f"background:{bg}; color:{fg}; border:1px solid {fg}; border-radius:10px; font-size:11px; padding:2px 4px;")
-                header_row.addWidget(b)
-                header_row.addSpacing(4)
-
+                b.setStyleSheet(f"background:{bg}; color:{fg}; border:1px solid {fg};"
+                                "border-radius:10px; font-size:11px; padding:2px 4px;")
+                header_row.addWidget(b); header_row.addSpacing(4)
         layout.addLayout(header_row)
 
-        hint = QLabel("💡 Doble clic en cualquier fila para ver el reporte forense RAW")
+        hint = QLabel(t('dbl_click_hint'))
         hint.setStyleSheet("color:#484f58; font-size:11px; font-style:italic;")
         layout.addWidget(hint)
 
-        sep = QFrame()
-        sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setStyleSheet("color:#21262d;")
-        layout.addWidget(sep)
+        sep = QFrame(); sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setStyleSheet("color:#21262d;"); layout.addWidget(sep)
 
-        # ─── Tabla ───
+        # ── Tabla ────────────────────────────────────────────────
         self.table = QTableWidget(0, 5)
-        self.table.setHorizontalHeaderLabels(["Severidad", "Tipo", "Nombre / Identificador", "Descripción", "Estado"])
+        self.table.setHorizontalHeaderLabels([
+            t('col_severity'), t('col_type'), t('col_name'), t('col_desc'), t('col_status')
+        ])
         self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
         self.table.horizontalHeader().setDefaultAlignment(Qt.AlignmentFlag.AlignLeft)
         self.table.verticalHeader().setVisible(False)
@@ -302,59 +411,48 @@ class ResultsScreen(QWidget):
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.setStyleSheet(TABLE_STYLE)
         self.table.itemDoubleClicked.connect(self._show_details)
-        self.table.setColumnWidth(0, 90)
-        self.table.setColumnWidth(1, 110)
-        self.table.setColumnWidth(2, 200)
-        self.table.setColumnWidth(4, 120)
+        self.table.setColumnWidth(0, 90); self.table.setColumnWidth(1, 110)
+        self.table.setColumnWidth(2, 200); self.table.setColumnWidth(4, 120)
         layout.addWidget(self.table)
-
         self._populate_table()
 
-        # ─── Barra inferior ───
+        # ── Footer ───────────────────────────────────────────────
         footer = QHBoxLayout()
-
-        total_lbl = QLabel(f"Total de hallazgos: <b style='color:#58a6ff'>{len(self.threats)}</b>")
+        total_lbl = QLabel(t('total_findings', n=len(self.threats)))
         total_lbl.setTextFormat(Qt.TextFormat.RichText)
         total_lbl.setStyleSheet("color:#8b949e; font-size:12px;")
-        footer.addWidget(total_lbl)
-        footer.addStretch()
+        footer.addWidget(total_lbl); footer.addStretch()
 
-        self.btn_mitigate = QPushButton("  ⚡  Comenzar Mitigación")
+        self.btn_mitigate = QPushButton(t('btn_mitigate'))
         self.btn_mitigate.setFixedHeight(40)
         self.btn_mitigate.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_mitigate.setStyleSheet(BTN_PRIMARY_GLOW)
-        self.btn_mitigate.clicked.connect(self._run_mitigation)
 
         if not self.admin_mode:
             self.btn_mitigate.setEnabled(False)
-            self.btn_mitigate.setToolTip("Requiere ejecutar como Administrador")
+            self.btn_mitigate.setToolTip(t('btn_mitigate_disabled_tooltip'))
             self.btn_mitigate.setStyleSheet(BTN_DISABLED)
+        else:
+            self.btn_mitigate.setStyleSheet(BTN_PRIMARY_GLOW)
+            self.btn_mitigate.clicked.connect(self._run_mitigation)
 
         footer.addWidget(self.btn_mitigate)
         layout.addLayout(footer)
-
         self.setLayout(layout)
 
     def _sev_badge(self, severity):
         colors = {
-            "Critical": ("#ff6b6b", "#1a0000"),
-            "High":     ("#ffa657", "#1a0a00"),
-            "Medium":   ("#e3b341", "#1a1000"),
-            "Low":      ("#79c0ff", "#00101a"),
+            "Critical": ("#ff6b6b", "#1a0000"), "High": ("#ffa657", "#1a0a00"),
+            "Medium": ("#e3b341", "#1a1000"),   "Low":  ("#79c0ff", "#00101a"),
         }
-        fg, bg = colors.get(severity, ("#8b949e", "#161b22"))
-        return fg, bg
+        return colors.get(severity, ("#8b949e", "#161b22"))
 
     def _populate_table(self):
         self.table.setRowCount(len(self.threats))
         for row, threat in enumerate(self.threats):
             sev = threat.get("severity", "Low")
             fg, bg = self._sev_badge(sev)
-
-            # Columna 0: Severity badge
             sev_item = QTableWidgetItem(f"  {sev}")
-            sev_item.setForeground(QColor(fg))
-            sev_item.setBackground(QColor(bg))
+            sev_item.setForeground(QColor(fg)); sev_item.setBackground(QColor(bg))
             self.table.setItem(row, 0, sev_item)
 
             for col, key in enumerate(["type", "name", "desc"], start=1):
@@ -362,24 +460,25 @@ class ResultsScreen(QWidget):
                 item.setForeground(QColor("#e6edf3"))
                 self.table.setItem(row, col, item)
 
-            status_item = QTableWidgetItem("  Pendiente")
-            status_item.setForeground(QColor("#8b949e"))
-            self.table.setItem(row, 4, status_item)
-
+            status = QTableWidgetItem(t('status_pending'))
+            status.setForeground(QColor("#8b949e"))
+            self.table.setItem(row, 4, status)
             self.table.setRowHeight(row, 34)
 
     def _show_details(self, item):
         row = item.row()
         if row < len(self.threats):
-            threat = self.threats[row]
-            dlg = ThreatDetailsDialog(threat["name"], threat.get("raw_data", {}), self)
-            dlg.exec()
+            th = self.threats[row]
+            ThreatDetailsDialog(th["name"], th.get("raw_data", {}), self).exec()
+
+    def _set_status(self, row, text, color):
+        item = QTableWidgetItem(f"  {text}")
+        item.setForeground(QColor(color))
+        self.table.setItem(row, 4, item)
 
     def _run_mitigation(self):
         reply = QMessageBox.question(
-            self, "⚠️ Confirmación de Seguridad",
-            "¿Confirmas que deseas ejecutar la mitigación?\n"
-            "Esta acción modificará procesos, tareas y archivos del sistema operativo.",
+            self, t('confirm_mitigation_title'), t('confirm_mitigation_body'),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No
         )
@@ -387,21 +486,14 @@ class ResultsScreen(QWidget):
             return
 
         for row in range(self.table.rowCount()):
-            t_type = self.threats[row]["type"]
-            t_name = self.threats[row]["name"]
-            t_sev  = self.threats[row]["severity"]
+            th = self.threats[row]
+            t_type, t_name, t_sev = th["type"], th["name"], th["severity"]
 
             if t_sev == "Critical" or t_type == "Kernel":
-                QMessageBox.critical(
-                    self, "🚨 Asistente de Bajo Nivel Requerido",
-                    f"Amenaza crítica detectada:\n<b>{t_name}</b>\n\n"
-                    "Esta amenaza afecta el núcleo del sistema. Mitigarla en caliente "
-                    "causaría un Pantallazo Azul (BSOD).\n\n"
-                    "Se generará un script seguro para Modo Seguro."
-                )
+                QMessageBox.critical(self, t('critical_threat_title'),
+                                     t('critical_threat_body', name=t_name))
                 ok, path = self.guide.generate_safe_mode_script(t_name, t_type)
-                msg = f"Script → {path}" if ok else "Error al generar script"
-                self._set_status(row, msg, "#e3b341")
+                self._set_status(row, f"Script → {path}" if ok else "Error", "#e3b341")
                 continue
 
             success, msg = False, ""
@@ -412,76 +504,81 @@ class ResultsScreen(QWidget):
             elif t_type == "File":
                 success, msg = self.mitigator.mitigate_file(t_name)
 
-            color = "#3fb950" if success else "#f85149"
-            self._set_status(row, ("✅ " if success else "❌ ") + msg, color)
+            self._set_status(row, ("✅ " if success else "❌ ") + msg,
+                             "#3fb950" if success else "#f85149")
 
-        QMessageBox.information(self, "✅ Proceso Finalizado",
-                                "Mitigación completada. Revisa la columna Estado para ver los resultados.")
+        QMessageBox.information(self, t('mitigation_done_title'), t('mitigation_done_body'))
 
-    def _set_status(self, row, text, color):
-        item = QTableWidgetItem(f"  {text}")
-        item.setForeground(QColor(color))
-        self.table.setItem(row, 4, item)
 
 # ─────────────────────────────────────────────────────────
 #  VENTANA PRINCIPAL
 # ─────────────────────────────────────────────────────────
 class Dashboard(QMainWindow):
-    def __init__(self, admin_mode=False):
+    def __init__(self, admin_mode=False, app_cfg=None):
         super().__init__()
         self.admin_mode = admin_mode
-        self.analyzer = ThreatAnalyzer()
-        self.mitigator = Mitigator()
-        self.guide = LowLevelGuide()
+        self.app_cfg    = app_cfg or {}
+        self.analyzer   = ThreatAnalyzer()
+        self.mitigator  = Mitigator()
+        self.guide      = LowLevelGuide()
 
-        self.setWindowTitle("Davenlab Security Remediation Tool")
-        self.setMinimumSize(860, 560)
+        self.setWindowTitle(t('app_title'))
+        self.setMinimumSize(900, 580)
         self.setStyleSheet(STYLE_DARK)
 
         self.stack = QStackedWidget()
         self.setCentralWidget(self.stack)
 
-        # Pantalla 1: Bienvenida
-        self.welcome = WelcomeScreen(admin_mode)
+        self.welcome = WelcomeScreen(admin_mode, self.app_cfg)
         self.welcome.start_analysis.connect(self._begin_analysis)
         self.stack.addWidget(self.welcome)
 
-        # Pantalla 2: Carga
         self.loading = LoadingScreen()
         self.stack.addWidget(self.loading)
 
-        # La pantalla 3 (resultados) se añade dinámicamente
+        # ── Verificar actualizaciones en background (silencioso) ─
+        if self.app_cfg.get("check_updates_on_start", True):
+            self._check_updates_silent()
+
+    def _check_updates_silent(self):
+        """Lanza la verificación en background; solo muestra diálogo si hay update."""
+        self._update_worker = UpdateCheckerWorker()
+        self._update_worker.update_available.connect(self._on_update_available)
+        # no_update y check_failed se ignoran silenciosamente
+        self._update_worker.start()
+
+    def _on_update_available(self, version: str, url: str):
+        reply = QMessageBox.question(
+            self, t('update_available_title'),
+            t('update_available_body', new=version, current=APP_VERSION),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            dlg = UpdateDownloadDialog(version, url, self)
+            dlg.exec()
 
     def _fade_to(self, new_widget):
-        """Hace un fade-out de la pantalla actual y fade-in de la nueva."""
         from PyQt6.QtWidgets import QGraphicsOpacityEffect
-        from PyQt6.QtCore import QPropertyAnimation, QEasingCurve
-
-        # Mostrar la nueva pantalla
         self.stack.addWidget(new_widget)
         self.stack.setCurrentWidget(new_widget)
-
-        # Fade-in sobre la nueva pantalla
         effect = QGraphicsOpacityEffect(new_widget)
         new_widget.setGraphicsEffect(effect)
         anim = QPropertyAnimation(effect, b"opacity", self)
-        anim.setDuration(380)
-        anim.setStartValue(0.0)
-        anim.setEndValue(1.0)
+        anim.setDuration(380); anim.setStartValue(0.0); anim.setEndValue(1.0)
         anim.setEasingCurve(QEasingCurve.Type.OutCubic)
         anim.start()
-        # Mantener referencia para que no sea recolectado por el GC
         self._current_anim = anim
 
     def _begin_analysis(self):
         self._fade_to(self.loading)
         self.worker = AnalysisWorker(self.analyzer)
         self.worker.finished.connect(self._show_results)
+        self.worker.progress.connect(self.loading.update_progress)
         self.worker.start()
 
     def _show_results(self, threats):
         results = ResultsScreen(threats, self.admin_mode, self.mitigator, self.guide)
-        # Pequeño delay para que la pantalla de carga sea visible al menos un momento
         QTimer.singleShot(600, lambda: self._fade_to(results))
 
 
@@ -489,86 +586,41 @@ class Dashboard(QMainWindow):
 #  ESTILOS GLOBALES
 # ─────────────────────────────────────────────────────────
 STYLE_DARK = """
-    QMainWindow, QWidget {
-        background-color: #0d1117;
-        color: #e6edf3;
-        font-family: 'Segoe UI', sans-serif;
-        font-size: 13px;
-    }
-    QDialog {
-        background-color: #161b22;
-    }
-    QScrollBar:vertical {
-        background:#161b22; width:8px; border-radius:4px;
-    }
-    QScrollBar::handle:vertical {
-        background:#30363d; border-radius:4px; min-height:20px;
-    }
+    QMainWindow, QWidget { background-color:#0d1117; color:#e6edf3;
+                           font-family:'Segoe UI',sans-serif; font-size:13px; }
+    QDialog { background-color:#161b22; }
+    QScrollBar:vertical { background:#161b22; width:8px; border-radius:4px; }
+    QScrollBar::handle:vertical { background:#30363d; border-radius:4px; min-height:20px; }
 """
 
 BTN_PRIMARY_GLOW = """
-    QPushButton {
-        background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #1f6feb, stop:1 #388bfd);
-        color: white;
-        border: none;
-        border-radius: 8px;
-        font-size: 13px;
-        font-weight: bold;
-        padding: 0 20px;
-    }
-    QPushButton:hover {
-        background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #388bfd, stop:1 #58a6ff);
-    }
-    QPushButton:pressed {
-        background: #1f6feb;
-    }
+    QPushButton { background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #1f6feb,stop:1 #388bfd);
+                  color:white; border:none; border-radius:8px;
+                  font-size:13px; font-weight:bold; padding:0 20px; }
+    QPushButton:hover { background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 #388bfd,stop:1 #58a6ff); }
+    QPushButton:pressed { background:#1f6feb; }
 """
 
 BTN_SECONDARY = """
-    QPushButton {
-        background:#21262d; color:#8b949e;
-        border:1px solid #30363d; border-radius:6px;
-        padding:0 16px; font-size:12px;
-    }
+    QPushButton { background:#21262d; color:#8b949e; border:1px solid #30363d;
+                  border-radius:6px; padding:0 16px; font-size:12px; }
     QPushButton:hover { background:#30363d; color:#e6edf3; }
 """
 
 BTN_DISABLED = """
-    QPushButton {
-        background:#161b22; color:#484f58;
-        border:1px solid #21262d; border-radius:8px;
-        font-size:13px; padding:0 20px;
-    }
+    QPushButton { background:#161b22; color:#484f58; border:1px solid #21262d;
+                  border-radius:8px; font-size:13px; padding:0 20px; }
 """
 
 TABLE_STYLE = """
-    QTableWidget {
-        background-color: #161b22;
-        alternate-background-color: #1a1f27;
-        border: 1px solid #21262d;
-        border-radius: 8px;
-        gridline-color: transparent;
-        color: #e6edf3;
-        selection-background-color: #1f6feb55;
-        outline: none;
-    }
-    QHeaderView::section {
-        background-color: #0d1117;
-        color: #8b949e;
-        font-size: 11px;
-        font-weight: bold;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-        padding: 6px 8px;
-        border: none;
-        border-bottom: 1px solid #21262d;
-    }
-    QTableWidget::item {
-        padding: 4px 8px;
-        border-bottom: 1px solid #21262d11;
-    }
-    QTableWidget::item:selected {
-        background-color: #1f6feb33;
-        color: #e6edf3;
-    }
+    QTableWidget { background-color:#161b22; alternate-background-color:#1a1f27;
+                   border:1px solid #21262d; border-radius:8px;
+                   gridline-color:transparent; color:#e6edf3;
+                   selection-background-color:#1f6feb55; outline:none; }
+    QHeaderView::section { background-color:#0d1117; color:#8b949e;
+                           font-size:11px; font-weight:bold;
+                           padding:6px 8px; border:none;
+                           border-bottom:1px solid #21262d; }
+    QTableWidget::item { padding:4px 8px; border-bottom:1px solid #21262d11; }
+    QTableWidget::item:selected { background-color:#1f6feb33; color:#e6edf3; }
 """
