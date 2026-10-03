@@ -142,6 +142,74 @@ class UpdateDownloadDialog(QDialog):
 
 
 # ─────────────────────────────────────────────────────────
+#  DIÁLOGO DE RESUMEN DE MITIGACIÓN
+# ─────────────────────────────────────────────────────────
+class MitigationSummaryDialog(QDialog):
+    def __init__(self, plan_data, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(t('summary_dialog_title'))
+        self.resize(700, 450)
+        self.setStyleSheet(STYLE_DARK)
+
+        layout = QVBoxLayout()
+        
+        lbl = QLabel(f"<b style='font-size:14px; color:#e6edf3'>{t('summary_dialog_header')}</b>")
+        layout.addWidget(lbl)
+        
+        # Tabla resumen
+        self.table = QTableWidget(0, 3)
+        self.table.setHorizontalHeaderLabels([t('col_severity'), t('col_name'), "Acción Planeada / Planned Action"])
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setDefaultAlignment(Qt.AlignmentFlag.AlignLeft)
+        self.table.verticalHeader().setVisible(False)
+        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
+        self.table.setStyleSheet(TABLE_STYLE)
+        
+        self.table.setRowCount(len(plan_data))
+        for row, (sev, name, action, action_color) in enumerate(plan_data):
+            sev_item = QTableWidgetItem(f" {sev} ")
+            # Reuse _sev_badge logic manually here for simplicity, or just set color
+            sev_item.setForeground(QColor("#e6edf3"))
+            self.table.setItem(row, 0, sev_item)
+            
+            self.table.setItem(row, 1, QTableWidgetItem(name))
+            
+            act_item = QTableWidgetItem(action)
+            act_item.setForeground(QColor(action_color))
+            self.table.setItem(row, 2, act_item)
+            
+            self.table.setRowHeight(row, 28)
+            
+        layout.addWidget(self.table)
+        
+        # Advertencia de punto de restauración
+        lbl_warn = QLabel("<i>" + t('creating_restore_point') + "</i>")
+        lbl_warn.setStyleSheet("color:#8b949e;")
+        layout.addWidget(lbl_warn)
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        
+        btn_cancel = QPushButton(t('btn_cancel'))
+        btn_cancel.setStyleSheet(BTN_SECONDARY)
+        btn_cancel.setFixedHeight(36)
+        btn_cancel.clicked.connect(self.reject)
+        btn_row.addWidget(btn_cancel)
+        
+        btn_ok = QPushButton(t('btn_proceed'))
+        btn_ok.setStyleSheet(BTN_PRIMARY_GLOW)
+        btn_ok.setFixedHeight(36)
+        btn_ok.clicked.connect(self.accept)
+        btn_row.addWidget(btn_ok)
+        
+        layout.addLayout(btn_row)
+        self.setLayout(layout)
+
+
+
+# ─────────────────────────────────────────────────────────
 #  PANTALLA DE BIENVENIDA
 # ─────────────────────────────────────────────────────────
 class WelcomeScreen(QWidget):
@@ -477,23 +545,68 @@ class ResultsScreen(QWidget):
         self.table.setItem(row, 4, item)
 
     def _run_mitigation(self):
-        reply = QMessageBox.question(
-            self, t('confirm_mitigation_title'), t('confirm_mitigation_body'),
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No
-        )
-        if reply == QMessageBox.StandardButton.No:
+        # 1. Generar plan de mitigación
+        plan_data = []
+        for th in self.threats:
+            t_type, t_name, t_sev = th["type"], th["name"], th["severity"]
+            if t_sev == "Critical" or t_type == "Kernel":
+                action = t('action_safe_mode'); color = "#e3b341"
+            elif t_type == "Process":
+                action = t('action_kill'); color = "#ff6b6b"
+            elif t_type == "ScheduledTask":
+                action = t('action_delete_task'); color = "#ff6b6b"
+            elif t_type == "File":
+                action = t('action_delete_file'); color = "#ff6b6b"
+            elif t_type == "DefenderLog":
+                action = t('action_info_only'); color = "#8b949e"
+            elif t_type == "Persistence":
+                action = t('action_manual_reg'); color = "#e3b341"
+            else:
+                action = "Desconocido"; color = "#8b949e"
+            
+            plan_data.append((t_sev, t_name, action, color))
+            
+        # 2. Mostrar resumen al usuario
+        summary_dlg = MitigationSummaryDialog(plan_data, self)
+        if summary_dlg.exec() != QDialog.DialogCode.Accepted:
             return
 
+        # 3. Crear Punto de Restauración
+        self.btn_mitigate.setEnabled(False)
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        
+        ok, msg = self.mitigator.create_restore_point()
+        
+        QApplication.restoreOverrideCursor()
+        
+        if not ok:
+            reply = QMessageBox.warning(
+                self, "Restore Point", 
+                t('restore_point_failed', error=msg),
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
+            )
+            if reply == QMessageBox.StandardButton.No:
+                self.btn_mitigate.setEnabled(True)
+                return
+
+        # 4. Ejecutar mitigación
         for row in range(self.table.rowCount()):
             th = self.threats[row]
             t_type, t_name, t_sev = th["type"], th["name"], th["severity"]
 
             if t_sev == "Critical" or t_type == "Kernel":
-                QMessageBox.critical(self, t('critical_threat_title'),
-                                     t('critical_threat_body', name=t_name))
+                QMessageBox.critical(self, t('critical_threat_title'), t('critical_threat_body', name=t_name))
                 ok, path = self.guide.generate_safe_mode_script(t_name, t_type)
                 self._set_status(row, f"Script → {path}" if ok else "Error", "#e3b341")
+                continue
+                
+            if t_type == "DefenderLog":
+                self._set_status(row, t('info_skipped'), "#8b949e")
+                continue
+                
+            if t_type == "Persistence":
+                self._set_status(row, t('manual_skipped'), "#e3b341")
                 continue
 
             success, msg = False, ""
@@ -507,6 +620,7 @@ class ResultsScreen(QWidget):
             self._set_status(row, ("✅ " if success else "❌ ") + msg,
                              "#3fb950" if success else "#f85149")
 
+        self.btn_mitigate.setEnabled(True)
         QMessageBox.information(self, t('mitigation_done_title'), t('mitigation_done_body'))
 
 

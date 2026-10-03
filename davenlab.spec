@@ -1,10 +1,3 @@
-# ─────────────────────────────────────────────────────────────────────────────
-# Davenlab Security Remediation Tool — PyInstaller Spec
-# ─────────────────────────────────────────────────────────────────────────────
-# Uso:
-#   pyinstaller davenlab.spec
-# ─────────────────────────────────────────────────────────────────────────────
-
 block_cipher = None
 
 a = Analysis(
@@ -12,21 +5,30 @@ a = Analysis(
     pathex=['.'],
     binaries=[],
     datas=[
-        # Incluir la carpeta de logs vacía (.gitkeep) para que exista en el exe
-        ('logs/.gitkeep', 'logs'),
+        ('logs/.gitkeep',  'logs'),
+        ('config.json',    '.'),         # Config de idioma y repo GitHub
+        ('assets/icon.ico','assets'),
     ],
     hiddenimports=[
         'PyQt6.QtCore',
         'PyQt6.QtGui',
         'PyQt6.QtWidgets',
+        'psutil',
+        'requests',
+        'packaging',
+        'packaging.version',
+        'core.i18n',
+        'core.updater',
+        'core.config',
+        'core.collector',
+        'core.analyzer',
+        'core.mitigator',
+        'core.low_level_guide',
     ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[
-        'tkinter', 'matplotlib', 'numpy', 'pandas',
-        'scipy', 'PIL.ImageTk',
-    ],
+    excludes=['tkinter', 'matplotlib', 'numpy', 'pandas', 'scipy'],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,
@@ -46,10 +48,10 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,             # Compresión UPX (reduce tamaño del .exe)
+    upx=True,
     upx_exclude=[],
     runtime_tmpdir=None,
-    console=False,        # Sin ventana de consola (app gráfica pura)
+    console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
@@ -57,5 +59,5 @@ exe = EXE(
     entitlements_file=None,
     icon='assets/icon.ico',
     version='version_info.txt',
-    uac_admin=True,       # Solicitar elevación de Admin al ejecutar
+    uac_admin=True,
 )

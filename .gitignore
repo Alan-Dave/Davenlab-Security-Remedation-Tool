@@ -33,6 +33,11 @@ assets/*.ico
 assets/*.jpg
 assets/*.png
 
+# ─── Configuración local del usuario ─────────────────────
+# config.json contiene preferencias personales (idioma, repo).
+# Se genera automáticamente en el primer uso.
+config.json
+
 # ─── Logs de la aplicación ────────────────────────────────
 # La carpeta logs/ puede contener datos sensibles del sistema del usuario.
 # Se ignora el contenido pero se conserva la carpeta con un .gitkeep

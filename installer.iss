@@ -8,10 +8,10 @@
 ; ─────────────────────────────────────────────────────────────────────────────
 
 #define MyAppName      "Davenlab Security Remediation Tool"
-#define MyAppVersion   "1.0"
+#define MyAppVersion   "1.1"
 #define MyAppPublisher "Davenlab"
 #define MyAppExeName   "DavenlabSecurityTool.exe"
-#define MyAppURL       "https://github.com/TU_USUARIO/Davenlab-Security-Remediation-Tool"
+#define MyAppURL       "https://github.com/Alan-Dave/Davenlab-Security-Remediation-Tool"
 
 [Setup]
 AppId={{A3F7B2C1-D4E5-4F6A-8B9C-0D1E2F3A4B5C}
@@ -27,7 +27,7 @@ AllowNoIcons=yes
 ; Solicitar permisos de Administrador para la instalación
 PrivilegesRequired=admin
 OutputDir=installer_output
-OutputBaseFilename=Davenlab_Security_Tool_v1.0_Setup
+OutputBaseFilename=Davenlab_Security_Tool_v1.1_Setup
 SetupIconFile=assets\icon.ico
 Compression=lzma2/ultra64
 SolidCompression=yes

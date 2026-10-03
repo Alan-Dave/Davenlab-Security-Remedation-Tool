@@ -51,3 +51,19 @@ class Mitigator:
             return False, "Permiso denegado al eliminar el archivo. Puede estar en uso."
         except Exception as e:
             return False, f"Error al eliminar: {str(e)}"
+
+    def create_restore_point(self) -> tuple[bool, str]:
+        """
+        Crea un Punto de Restauración del Sistema usando PowerShell.
+        Requiere privilegios de Administrador.
+        """
+        try:
+            cmd = "powershell -Command \"Checkpoint-Computer -Description 'Davenlab Pre-Mitigation' -RestorePointType 'MODIFY_SETTINGS'\""
+            res = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+            if res.returncode == 0:
+                return True, "Punto de restauración creado."
+            else:
+                return False, res.stderr.strip() or res.stdout.strip()
+        except Exception as e:
+            return False, str(e)
+

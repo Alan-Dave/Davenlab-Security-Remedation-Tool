@@ -192,6 +192,64 @@ STRINGS = {
         'es': 'Ya tienes la versión más reciente ({version}).',
         'en': 'You already have the latest version ({version}).',
     },
+
+    # ── Resumen de Mitigación y Restauración ──────────────────────
+    'summary_dialog_title': {
+        'es': '📋 Resumen de Acciones',
+        'en': '📋 Action Summary',
+    },
+    'summary_dialog_header': {
+        'es': 'Revisa el plan de mitigación antes de proceder',
+        'en': 'Review the mitigation plan before proceeding',
+    },
+    'action_kill': {
+        'es': '🔴 Terminar proceso',
+        'en': '🔴 Kill process',
+    },
+    'action_delete_task': {
+        'es': '🗑️ Eliminar tarea',
+        'en': '🗑️ Delete task',
+    },
+    'action_delete_file': {
+        'es': '🗑️ Eliminar archivo',
+        'en': '🗑️ Delete file',
+    },
+    'action_safe_mode': {
+        'es': '🛡️ Script Modo Seguro (No en caliente)',
+        'en': '🛡️ Safe Mode Script (No hot mitig)',
+    },
+    'action_info_only': {
+        'es': 'ℹ️ Solo información (Sin acción)',
+        'en': 'ℹ️ Info only (No action)',
+    },
+    'action_manual_reg': {
+        'es': '⚠️ Borrar clave requiere acción manual',
+        'en': '⚠️ Key deletion requires manual action',
+    },
+    'creating_restore_point': {
+        'es': 'Creando Punto de Restauración del Sistema (puede tardar un minuto)...',
+        'en': 'Creating System Restore Point (may take a minute)...',
+    },
+    'restore_point_failed': {
+        'es': '⚠️ No se pudo crear el Punto de Restauración.\n{error}\n\n¿Continuar con la mitigación de todos modos?',
+        'en': '⚠️ Could not create Restore Point.\n{error}\n\nContinue with mitigation anyway?',
+    },
+    'btn_proceed': {
+        'es': 'Proceder',
+        'en': 'Proceed',
+    },
+    'btn_cancel': {
+        'es': 'Cancelar',
+        'en': 'Cancel',
+    },
+    'info_skipped': {
+        'es': 'ℹ️ Saltado (Solo información)',
+        'en': 'ℹ️ Skipped (Info only)',
+    },
+    'manual_skipped': {
+        'es': '⚠️ Requiere limpieza manual (regedit)',
+        'en': '⚠️ Requires manual cleanup (regedit)',
+    },
 }
 
 
