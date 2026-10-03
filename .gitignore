@@ -1,0 +1,51 @@
+# ─── Python ───────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+.Python
+
+# ─── Entornos virtuales ───────────────────────────────────
+venv/
+.venv/
+env/
+ENV/
+.env
+
+# ─── Build / distribución ─────────────────────────────────
+build/
+dist/
+*.egg-info/
+*.spec
+*.exe
+
+# ─── PyInstaller ──────────────────────────────────────────
+# Generados al compilar con PyInstaller
+*.manifest
+
+# ─── Logs de la aplicación ────────────────────────────────
+# La carpeta logs/ puede contener datos sensibles del sistema del usuario.
+# Se ignora el contenido pero se conserva la carpeta con un .gitkeep
+logs/*
+!logs/.gitkeep
+
+# ─── Scripts de rescate generados en tiempo de ejecución ──
+C:/Windows/Temp/Davenlab_Rescue/
+
+# ─── IDEs y editores ──────────────────────────────────────
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# ─── Windows ──────────────────────────────────────────────
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# ─── macOS (por si acaso) ─────────────────────────────────
+.DS_Store
+.AppleDouble
