@@ -27,7 +27,7 @@
 
 ---
 
-## 🎯 ¿Qué hace esta herramienta?
+## ¿Qué hace esta herramienta?
 
 Davenlab Security Remediation Tool es una aplicación de escritorio en **Python + PyQt6** que actúa como un segundo nivel de análisis sobre los reportes generados por escáneres de seguridad (como [SecurityToolkit](https://wa.me/18493965470)). Su objetivo es guiar al usuario —técnico o no— a través del proceso de mitigación de amenazas de forma **segura y controlada**.
 
@@ -43,7 +43,7 @@ Davenlab Security Remediation Tool es una aplicación de escritorio en **Python 
 
 ---
 
-## 🗂️ Estructura del Proyecto
+## Estructura del Proyecto
 
 ```
 Davenlab-Security-Remediation-Tool/
@@ -67,7 +67,7 @@ Davenlab-Security-Remediation-Tool/
 
 ---
 
-## 🚀 Instalación y Uso
+## Instalación y Uso
 
 ### 1. Clonar el repositorio
 
@@ -105,7 +105,7 @@ python main.py
 
 ---
 
-## 🧠 Lógica de Mitigación
+## Lógica de Mitigación
 
 ```
 Amenaza detectada
@@ -133,7 +133,7 @@ Amenaza detectada
 
 ---
 
-## 📦 Compilar a ejecutable `.exe` (opcional)
+## Compilar a ejecutable `.exe` (opcional)
 
 ```bash
 pip install pyinstaller
